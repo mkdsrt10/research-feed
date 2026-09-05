@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Research Feed</title>
+  <link rel="manifest" href="/app/manifest.json" />
+  <meta name="theme-color" content="#0A0B0E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/app/styles.css" />
+</head>
+<body>
+  <div id="homeScreen" class="screen">
+    <div class="console-frame">
+      <div class="home-header">
+        <div class="brand">
+          <span class="brand-mark">◈</span>
+          <div>
+            <h1>Home</h1>
+            <div class="brand-sub">signal log · personal ops</div>
+          </div>
+        </div>
+        <button id="weeklySummaryBtn" class="bracket-btn">[ weekly summary ]</button>
+      </div>
+
+      <form id="quickAddForm" class="quick-add">
+        <span class="quick-add-caret">&gt;</span>
+        <input id="quickAddInput" type="text" placeholder="log a todo…" autocomplete="off" />
+        <button type="submit" class="bracket-btn small">[ + ]</button>
+      </form>
+
+      <div id="summaryResult" class="summary-result hidden"></div>
+
+      <section class="todo-section">
+        <h2><span class="section-tag committed">committed</span><span class="hint">has a due date</span></h2>
+        <div id="committedList" class="todo-list"></div>
+      </section>
+
+      <section class="todo-section">
+        <h2><span class="section-tag added">added</span><span class="hint">no due date yet</span></h2>
+        <div id="addedList" class="todo-list"></div>
+      </section>
+
+      <section class="todo-section">
+        <h2 id="doneToggle" class="collapsible"><span class="section-tag done">done</span><span class="chevron">▾</span></h2>
+        <div id="doneList" class="todo-list hidden"></div>
+      </section>
+
+      <section class="todo-section">
+        <h2 id="pastSummariesToggle" class="collapsible"><span class="section-tag">past summaries</span><span class="chevron">▾</span></h2>
+        <div id="pastSummariesList" class="summary-list hidden"></div>
+      </section>
+    </div>
+  </div>
+
+  <div id="feedScreen" class="screen hidden">
+    <div id="feed" class="feed"></div>
+    <button id="logToggle" class="bracket-btn floating">[ log ]</button>
+    <div id="logView" class="log-view hidden">
+      <div class="log-header">
+        <span class="quick-add-caret">&gt;</span>
+        <input id="logDate" type="date" />
+        <button id="closeLog" class="close-btn" aria-label="Close">[×]</button>
+      </div>
+      <div id="logList" class="log-list"></div>
+    </div>
+  </div>
+
+  <div id="detail" class="detail hidden">
+    <button id="closeDetail" class="close-btn" aria-label="Close">[×]</button>
+    <div id="detailContent" class="detail-content"></div>
+  </div>
+
+  <div id="addTodoPrompt" class="add-todo-prompt hidden">
+    <div class="add-todo-backdrop"></div>
+    <div class="add-todo-sheet">
+      <div class="add-todo-context" id="addTodoContext"></div>
+      <textarea id="addTodoComment" rows="2" placeholder="optional comment…"></textarea>
+      <div class="add-todo-actions">
+        <button id="addTodoCancel" class="bracket-btn">[ cancel ]</button>
+        <button id="addTodoSave" class="bracket-btn primary">[ save ]</button>
+      </div>
+    </div>
+  </div>
+
+  <nav class="tab-bar">
+    <button class="tab-btn active" data-tab="homeScreen">[ Home ]</button>
+    <button class="tab-btn" data-tab="feedScreen">[ Feed ]</button>
+  </nav>
+
+  <script src="/app/app.js"></script>
+</body>
+</html>

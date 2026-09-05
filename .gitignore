@@ -1,0 +1,11 @@
+data/research.db
+extract/state.json
+logs/
+__pycache__/
+*.pyc
+.DS_Store
+
+# personal chat exports and derived per-message files -- contains names,
+# job comp figures, career strategy; not meant for the repo
+inbox/
+research-log-export/

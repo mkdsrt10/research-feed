@@ -1,0 +1,2 @@
+# No third-party dependencies -- stdlib only (sqlite3, http.server, subprocess).
+# Requires the `hermes` CLI on PATH / at ~/.local/bin/hermes for extraction.
