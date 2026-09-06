@@ -41,6 +41,28 @@ already installed at `~/.local/bin/hermes`.
   shows up in multiple sections/documents on the same day); these collapse
   into one `entities` row instead of duplicating.
 
+## Agent access
+
+Any agent (Hermes, or something else entirely) can read and write to research-feed
+over the same JSON API the PWA uses — feed, todos, comments, drafts, and a bundled
+`GET /api/context/daily` for personalized context. Your own browser use stays
+key-free; an agent authenticates via an `X-API-Key` header.
+
+```bash
+# create a key (printed once -- copy it, it can't be shown again)
+python3 server/manage_keys.py create --name hermes-vm --scope readwrite   # or --scope read
+python3 server/manage_keys.py list
+python3 server/manage_keys.py revoke --id <id>
+```
+
+- `read` keys can only `GET`; `readwrite` keys can also `POST`/`PATCH`/`DELETE`.
+- A request with no key at all is treated as trusted/anonymous (this is what the PWA
+  does) and always allowed — the key is for granting and later revoking *other*
+  agents' access, not for locking out your own client.
+- Writes made with a key are attributed: `todos`, `todo_comments`, and `drafts` rows
+  get a `created_by` set to the key's name, so you can tell what an agent added versus
+  what you added yourself.
+
 ## Known follow-up
 
 The server binds to `0.0.0.0` so it's reachable on your LAN, but for real

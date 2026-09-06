@@ -74,6 +74,16 @@ CREATE TABLE IF NOT EXISTS todo_comments (
 
 CREATE INDEX IF NOT EXISTS idx_todo_comments_todo ON todo_comments (todo_id);
 
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  key_hash TEXT NOT NULL,
+  scope TEXT NOT NULL,              -- 'read' | 'readwrite'
+  created_at TEXT NOT NULL,
+  last_used_at TEXT,
+  revoked_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS drafts (
   id TEXT PRIMARY KEY,
   platform TEXT NOT NULL,                  -- 'x' | 'linkedin'

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import sqlite3
 import sys
@@ -20,10 +21,22 @@ sys.path.insert(0, str(ROOT / "extract"))
 import weekly_summary  # noqa: E402
 
 
+ATTRIBUTABLE_TABLES = ("todos", "drafts", "todo_comments")
+
+
+def _ensure_created_by_columns(conn: sqlite3.Connection) -> None:
+    """created_by was added after these tables existed in the wild -- migrate in place."""
+    for table in ATTRIBUTABLE_TABLES:
+        cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+        if "created_by" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN created_by TEXT")
+
+
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA_PATH.read_text())
+    _ensure_created_by_columns(conn)
     return conn
 
 
@@ -66,6 +79,27 @@ class Handler(BaseHTTPRequestHandler):
         if not length:
             return {}
         return json.loads(self.rfile.read(length) or b"{}")
+
+    def _authenticate(self, write: bool = False):
+        """Optional API-key auth for agent access. No key -> anonymous/trusted (the PWA
+        itself never sends one). A key, if present, must be valid; returns the key row
+        (for created_by attribution), None if anonymous, or False if it already sent an
+        error response and the caller should abort."""
+        raw = self.headers.get("X-API-Key")
+        if not raw:
+            return None
+        key_hash = hashlib.sha256(raw.encode()).hexdigest()
+        rows = query("SELECT * FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL", (key_hash,))
+        if not rows:
+            self._send_json({"error": "invalid or revoked API key"}, status=401)
+            return False
+        key = rows[0]
+        if write and key["scope"] != "readwrite":
+            self._send_json({"error": "this key is read-only"}, status=403)
+            return False
+        execute("UPDATE api_keys SET last_used_at = ? WHERE id = ?",
+                (dt.datetime.now().astimezone().isoformat(), key["id"]))
+        return key
 
     # ---- GET ----
 
@@ -216,6 +250,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/drafts":
+            key = self._authenticate(write=True)
+            if key is False:
+                return
             body = self._read_json_body()
             platform = (body.get("platform") or "").strip()
             content = (body.get("content") or "").strip()
@@ -224,16 +261,20 @@ class Handler(BaseHTTPRequestHandler):
                 return
             draft_id = str(uuid.uuid4())
             execute(
-                """INSERT INTO drafts (id, platform, content, status, source_entity_id, source_todo_id, created_at)
-                   VALUES (?, ?, ?, 'pending', ?, ?, ?)""",
+                """INSERT INTO drafts (id, platform, content, status, source_entity_id, source_todo_id,
+                                       created_at, created_by)
+                   VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)""",
                 (draft_id, platform, content, body.get("source_entity_id"), body.get("source_todo_id"),
-                 dt.datetime.now().astimezone().isoformat()),
+                 dt.datetime.now().astimezone().isoformat(), key["name"] if key else None),
             )
             rows = query("SELECT * FROM drafts WHERE id = ?", (draft_id,))
             self._send_json(rows[0], status=201)
             return
 
         if parsed.path == "/api/todos":
+            key = self._authenticate(write=True)
+            if key is False:
+                return
             body = self._read_json_body()
             title = (body.get("title") or "").strip()
             if not title:
@@ -242,15 +283,19 @@ class Handler(BaseHTTPRequestHandler):
             todo_id = str(uuid.uuid4())
             now = dt.datetime.now().astimezone().isoformat()
             execute(
-                """INSERT INTO todos (id, title, notes, source_entity_id, status, added_at)
-                   VALUES (?, ?, ?, ?, 'added', ?)""",
-                (todo_id, title, body.get("notes"), body.get("source_entity_id"), now),
+                """INSERT INTO todos (id, title, notes, source_entity_id, status, added_at, created_by)
+                   VALUES (?, ?, ?, ?, 'added', ?, ?)""",
+                (todo_id, title, body.get("notes"), body.get("source_entity_id"), now,
+                 key["name"] if key else None),
             )
             rows = query("SELECT * FROM todos WHERE id = ?", (todo_id,))
             self._send_json(rows[0], status=201)
             return
 
         if parsed.path.startswith("/api/todos/") and parsed.path.endswith("/comments"):
+            key = self._authenticate(write=True)
+            if key is False:
+                return
             todo_id = parsed.path.split("/")[3]
             if not query("SELECT id FROM todos WHERE id = ?", (todo_id,)):
                 self._send_json({"error": "not found"}, status=404)
@@ -263,8 +308,8 @@ class Handler(BaseHTTPRequestHandler):
             comment_id = str(uuid.uuid4())
             now = dt.datetime.now().astimezone().isoformat()
             execute(
-                "INSERT INTO todo_comments (id, todo_id, body, created_at) VALUES (?, ?, ?, ?)",
-                (comment_id, todo_id, text, now),
+                "INSERT INTO todo_comments (id, todo_id, body, created_at, created_by) VALUES (?, ?, ?, ?, ?)",
+                (comment_id, todo_id, text, now, key["name"] if key else None),
             )
             rows = query("SELECT * FROM todo_comments WHERE id = ?", (comment_id,))
             self._send_json(rows[0], status=201)
@@ -288,6 +333,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PATCH(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        key = self._authenticate(write=True)
+        if key is False:
+            return
 
         if parsed.path.startswith("/api/drafts/"):
             draft_id = parsed.path.rsplit("/", 1)[-1]
@@ -359,6 +407,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        key = self._authenticate(write=True)
+        if key is False:
+            return
         if not parsed.path.startswith("/api/todos/"):
             self._send_json({"error": "not found"}, status=404)
             return
