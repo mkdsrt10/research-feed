@@ -67,6 +67,7 @@ const TYPE_COLORS = {
   person: "var(--sig-person)",
   repo: "var(--sig-repo)",
   job: "var(--sig-job)",
+  draft: "var(--sig-job)",
 };
 
 function typeColor(type) {
@@ -95,6 +96,26 @@ function metaRowHtml(entity, index) {
     </div>`;
 }
 
+function toBullets(text, maxBullets) {
+  if (!text) return [];
+  const sentences = text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  return maxBullets ? sentences.slice(0, maxBullets) : sentences;
+}
+
+function bulletsHtml(text, maxBullets) {
+  const bullets = toBullets(text, maxBullets);
+  if (!bullets.length) return "";
+  return `<ul class="card-bullets">${bullets.map((b) => `<li>${escapeHtml(b)}</li>`).join("")}</ul>`;
+}
+
+function commentItemHtml(c) {
+  return `
+    <div class="comment-item ${c.author === "hermes" ? "comment-hermes" : ""}">
+      <div class="comment-meta">${c.author === "hermes" ? "hermes · " : ""}${escapeHtml(formatTs(c.created_at))}</div>
+      <div class="comment-body">${escapeHtml(c.body)}</div>
+    </div>`;
+}
+
 function renderExtra(extra) {
   return Object.entries(extra || {})
     .filter(([, v]) => v !== null && v !== undefined && v !== "")
@@ -102,14 +123,35 @@ function renderExtra(extra) {
     .join("");
 }
 
+function draftCardHtml(draft, index) {
+  const platform = (draft.extra && draft.extra.platform) || "draft";
+  return `
+    <div class="card draft-card" data-id="${draft.id}" data-draft="1">
+      ${metaRowHtml(draft, index)}
+      <span class="type-tag" style="color: ${typeColor("draft")}">[${escapeHtml(platform)} draft]</span>
+      <h2 class="card-title">${escapeHtml(draft.summary)}</h2>
+      <div class="card-footer">
+        <button class="draft-approve-btn" data-id="${draft.id}">[ approve ]</button>
+        <button class="draft-reject-btn" data-id="${draft.id}">[ reject ]</button>
+      </div>
+    </div>`;
+}
+
 function cardHtml(entity, index) {
+  if (entity.type === "draft") return draftCardHtml(entity, index);
+  const liked = !!entity.liked_at;
   return `
     <div class="card" data-id="${entity.id}">
       <button class="card-add-btn" data-add-id="${entity.id}" aria-label="Add to todo">[ + ]</button>
       ${metaRowHtml(entity, index)}
       <span class="type-tag" style="color: ${typeColor(entity.type)}">[${escapeHtml(entity.type)}]</span>
       <h2 class="card-title">${escapeHtml(entity.one_liner || entity.title)}</h2>
-      <div class="card-hint">tap for detail</div>
+      ${bulletsHtml(entity.summary, 4)}
+      <div class="card-footer">
+        <button class="card-like-btn" data-like-id="${entity.id}" data-liked="${liked}">${liked ? "[ ♥ ]" : "[ ♡ ]"}</button>
+        <button class="card-comment-btn" data-comment-id="${entity.id}">[ comment ]</button>
+        <span class="card-hint">tap for detail</span>
+      </div>
     </div>`;
 }
 
@@ -118,15 +160,30 @@ function detailHtml(entity, index) {
   const link = entity.raw_url
     ? `<a class="source-link" href="${escapeHtml(entity.raw_url)}" target="_blank" rel="noopener">[ open source → ]</a>`
     : "";
+  const liked = !!entity.liked_at;
+  const comments = entity.comments || [];
+  const commentsHtml = comments.length
+    ? comments.map(commentItemHtml).join("")
+    : '<p class="todo-empty">// no comments yet</p>';
   return `
     ${metaRowHtml(entity, index ?? 0)}
     <span class="type-tag" style="color: ${typeColor(entity.type)}">[${escapeHtml(entity.type)}]</span>
     <h1>${escapeHtml(entity.title)}</h1>
-    <p>${escapeHtml(entity.summary || entity.one_liner || "")}</p>
+    ${bulletsHtml(entity.summary)}
     <div class="detail-tags">${tags}</div>
     ${renderExtra(entity.extra)}
-    ${link}
-    <button id="detailAddTodo" class="add-todo-btn">[ add to todo ]</button>
+    <div class="detail-actions">
+      ${link}
+      <button class="entity-like-btn add-todo-btn" data-id="${entity.id}" data-liked="${liked}">${liked ? "[ ♥ liked ]" : "[ ♡ like ]"}</button>
+      <button id="detailAddTodo" class="add-todo-btn">[ add to todo ]</button>
+    </div>
+    <h2>comments</h2>
+    <div class="comment-list" id="detailCommentList">${commentsHtml}</div>
+    <form id="detailCommentForm" class="quick-add" data-id="${entity.id}">
+      <span class="quick-add-caret">&gt;</span>
+      <input id="detailCommentInput" type="text" placeholder="add a comment…" autocomplete="off" />
+      <button type="submit" class="bracket-btn small">[ + ]</button>
+    </form>
   `;
 }
 
@@ -290,9 +347,95 @@ feedEl.addEventListener("click", async (event) => {
     openAddTodoPrompt(entity, addBtn);
     return;
   }
+  const likeBtn = event.target.closest(".card-like-btn");
+  if (likeBtn) {
+    event.stopPropagation();
+    const res = await fetch(`/api/entity/${likeBtn.dataset.likeId}/like`, { method: "POST" });
+    const { liked_at } = await res.json();
+    likeBtn.dataset.liked = String(!!liked_at);
+    likeBtn.textContent = liked_at ? "[ ♥ ]" : "[ ♡ ]";
+    return;
+  }
+  const commentBtn = event.target.closest(".card-comment-btn");
+  if (commentBtn) {
+    event.stopPropagation();
+    const card = commentBtn.closest(".card");
+    const titleEl = card ? card.querySelector(".card-title") : null;
+    openCommentSheet(commentBtn.dataset.commentId, titleEl ? titleEl.textContent : "");
+    return;
+  }
+  const approveBtn = event.target.closest(".draft-approve-btn");
+  if (approveBtn) {
+    event.stopPropagation();
+    await fetch(`/api/drafts/${approveBtn.dataset.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "approved" }),
+    });
+    loadFeed();
+    return;
+  }
+  const rejectBtn = event.target.closest(".draft-reject-btn");
+  if (rejectBtn) {
+    event.stopPropagation();
+    await fetch(`/api/drafts/${rejectBtn.dataset.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "rejected" }),
+    });
+    loadFeed();
+    return;
+  }
   const card = event.target.closest(".card");
-  if (card) openDetail(card.dataset.id);
+  if (card && !card.dataset.draft) openDetail(card.dataset.id);
 });
+
+// ---- inline comment sheet (feed cards) ----
+
+const entityCommentSheetEl = document.getElementById("entityCommentSheet");
+const entityCommentContextEl = document.getElementById("entityCommentContext");
+const entityCommentThreadEl = document.getElementById("entityCommentThread");
+let activeCommentEntityId = null;
+
+async function openCommentSheet(entityId, title) {
+  activeCommentEntityId = entityId;
+  entityCommentContextEl.textContent = title;
+  entityCommentThreadEl.innerHTML = "// loading…";
+  entityCommentSheetEl.classList.remove("hidden");
+  const res = await fetch(`/api/entity/${entityId}`);
+  const entity = await res.json();
+  const comments = entity.comments || [];
+  entityCommentThreadEl.innerHTML = comments.length
+    ? comments.map(commentItemHtml).join("")
+    : '<p class="todo-empty">// no comments yet</p>';
+}
+
+function closeCommentSheet() {
+  activeCommentEntityId = null;
+  entityCommentSheetEl.classList.add("hidden");
+}
+
+document.getElementById("entityCommentForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = document.getElementById("entityCommentInput");
+  const text = input.value.trim();
+  if (!text || !activeCommentEntityId) return;
+  input.value = "";
+  input.disabled = true;
+  const res = await fetch(`/api/entity/${activeCommentEntityId}/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body: text }),
+  });
+  const { comment, reply } = await res.json();
+  if (entityCommentThreadEl.querySelector(".todo-empty")) entityCommentThreadEl.innerHTML = "";
+  entityCommentThreadEl.insertAdjacentHTML("beforeend", commentItemHtml(comment));
+  if (reply) entityCommentThreadEl.insertAdjacentHTML("beforeend", commentItemHtml(reply));
+  input.disabled = false;
+});
+
+document.getElementById("entityCommentClose").addEventListener("click", closeCommentSheet);
+document.querySelector("#entityCommentSheet .add-todo-backdrop").addEventListener("click", closeCommentSheet);
 
 detailContentEl.addEventListener("click", async (event) => {
   if (event.target.id === "detailAddTodo" && currentDetailEntity) {
@@ -302,6 +445,14 @@ detailContentEl.addEventListener("click", async (event) => {
   const sourceOpenLink = event.target.closest(".source-link");
   if (sourceOpenLink && currentDetailEntity) {
     logInteraction(currentDetailEntity.id, "open_source");
+  }
+  const likeBtn = event.target.closest(".entity-like-btn");
+  if (likeBtn) {
+    const res = await fetch(`/api/entity/${likeBtn.dataset.id}/like`, { method: "POST" });
+    const { liked_at } = await res.json();
+    likeBtn.dataset.liked = String(!!liked_at);
+    likeBtn.textContent = liked_at ? "[ ♥ liked ]" : "[ ♡ like ]";
+    return;
   }
   const doneBtn = event.target.closest(".todo-detail-done");
   if (doneBtn) {
@@ -345,18 +496,40 @@ detailContentEl.addEventListener("change", async (event) => {
 });
 
 detailContentEl.addEventListener("submit", async (event) => {
-  if (event.target.id !== "todoCommentForm") return;
-  event.preventDefault();
-  const form = event.target;
-  const input = document.getElementById("todoCommentInput");
-  const text = input.value.trim();
-  if (!text) return;
-  await fetch(`/api/todos/${form.dataset.id}/comments`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ body: text }),
-  });
-  openTodoDetail(form.dataset.id);
+  if (event.target.id === "todoCommentForm") {
+    event.preventDefault();
+    const form = event.target;
+    const input = document.getElementById("todoCommentInput");
+    const text = input.value.trim();
+    if (!text) return;
+    await fetch(`/api/todos/${form.dataset.id}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: text }),
+    });
+    openTodoDetail(form.dataset.id);
+    return;
+  }
+  if (event.target.id === "detailCommentForm") {
+    event.preventDefault();
+    const form = event.target;
+    const input = document.getElementById("detailCommentInput");
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    input.disabled = true;
+    const res = await fetch(`/api/entity/${form.dataset.id}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: text }),
+    });
+    const { comment, reply } = await res.json();
+    const list = document.getElementById("detailCommentList");
+    if (list.querySelector(".todo-empty")) list.innerHTML = "";
+    list.insertAdjacentHTML("beforeend", commentItemHtml(comment));
+    if (reply) list.insertAdjacentHTML("beforeend", commentItemHtml(reply));
+    input.disabled = false;
+  }
 });
 
 document.getElementById("closeDetail").addEventListener("click", () => {
@@ -364,16 +537,81 @@ document.getElementById("closeDetail").addEventListener("click", () => {
   detailEl.classList.add("hidden");
 });
 
+// ---- pull-down-to-close on the detail overlay ----
+
+let dragStartY = null;
+let dragCurrentY = null;
+const DRAG_CLOSE_THRESHOLD = 80;
+
+detailEl.addEventListener("touchstart", (event) => {
+  dragStartY = detailEl.scrollTop <= 0 ? event.touches[0].clientY : null;
+  dragCurrentY = null;
+}, { passive: true });
+
+detailEl.addEventListener("touchmove", (event) => {
+  if (dragStartY === null) return;
+  dragCurrentY = event.touches[0].clientY;
+  const delta = dragCurrentY - dragStartY;
+  if (delta > 0) detailEl.style.transform = `translateY(${Math.min(delta, 200)}px)`;
+}, { passive: true });
+
+detailEl.addEventListener("touchend", () => {
+  if (dragStartY === null) return;
+  const delta = (dragCurrentY ?? dragStartY) - dragStartY;
+  detailEl.style.transform = "";
+  if (delta > DRAG_CLOSE_THRESHOLD) {
+    flushDetailView();
+    detailEl.classList.add("hidden");
+  }
+  dragStartY = null;
+  dragCurrentY = null;
+});
+
+function logItemHtml(e) {
+  return `
+    <div class="log-item" data-id="${e.id}">
+      <div class="type" style="color:${typeColor(e.type)}">[${escapeHtml(e.type)}]</div>
+      <div class="title">${escapeHtml(e.title)}</div>
+    </div>`;
+}
+
+function logGroupHtml(type, group) {
+  const label = type === "person" ? "people" : "jobs";
+  const rows = group.map((e) => `<div class="log-group-row" data-id="${e.id}">${escapeHtml(e.title)}</div>`).join("");
+  return `
+    <div class="log-group">
+      <div class="type" style="color:${typeColor(type)}">[${escapeHtml(type)}] · ${group.length} ${label}</div>
+      ${rows}
+    </div>`;
+}
+
+function renderLogGroups(entities) {
+  // Group ALL person/job entries for the day together (not just consecutive ones --
+  // the API orders by novelty, not type, so same-type entries are rarely adjacent).
+  // Each group renders once, at the position of its first occurrence; everything else
+  // (papers, repos) renders individually, preserving the original order.
+  const buckets = { person: [], job: [] };
+  entities.forEach((e) => {
+    if (buckets[e.type]) buckets[e.type].push(e);
+  });
+  const rendered = { person: false, job: false };
+  const html = [];
+  entities.forEach((e) => {
+    if (buckets[e.type]) {
+      if (rendered[e.type]) return;
+      rendered[e.type] = true;
+      html.push(buckets[e.type].length > 1 ? logGroupHtml(e.type, buckets[e.type]) : logItemHtml(e));
+    } else {
+      html.push(logItemHtml(e));
+    }
+  });
+  return html.join("");
+}
+
 async function loadLog(date) {
   const res = await fetch(`/api/log/${date}`);
   const entities = await res.json();
-  logListEl.innerHTML = entities.length
-    ? entities.map((e) => `
-        <div class="log-item" data-id="${e.id}">
-          <div class="type" style="color:${typeColor(e.type)}">[${escapeHtml(e.type)}]</div>
-          <div class="title">${escapeHtml(e.title)}</div>
-        </div>`).join("")
-    : "<p>No entries for this date.</p>";
+  logListEl.innerHTML = entities.length ? renderLogGroups(entities) : "<p>No entries for this date.</p>";
 }
 
 document.getElementById("logToggle").addEventListener("click", () => {
@@ -390,7 +628,7 @@ document.getElementById("closeLog").addEventListener("click", () => {
 logDateEl.addEventListener("change", () => loadLog(logDateEl.value));
 
 logListEl.addEventListener("click", (event) => {
-  const item = event.target.closest(".log-item");
+  const item = event.target.closest(".log-item, .log-group-row");
   if (item) {
     logViewEl.classList.add("hidden");
     openDetail(item.dataset.id);

@@ -97,6 +97,16 @@ CREATE TABLE IF NOT EXISTS drafts (
 
 CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts (status);
 
+CREATE TABLE IF NOT EXISTS entity_comments (
+  id TEXT PRIMARY KEY,
+  entity_id TEXT NOT NULL REFERENCES entities(id),
+  body TEXT NOT NULL,
+  author TEXT NOT NULL DEFAULT 'user',   -- 'user' | 'hermes'
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_comments_entity ON entity_comments (entity_id);
+
 CREATE TABLE IF NOT EXISTS weekly_summaries (
   id TEXT PRIMARY KEY,
   generated_at TEXT NOT NULL,

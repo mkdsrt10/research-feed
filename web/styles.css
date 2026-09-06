@@ -224,7 +224,64 @@ h1, h2 { font-family: var(--font-display); }
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--muted);
+}
+
+.card-bullets {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.card-bullets li { margin-bottom: 6px; }
+
+.card-footer {
+  display: flex;
+  align-items: center;
+  gap: 14px;
   margin-top: 18px;
+}
+
+.card-like-btn, .card-comment-btn {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  background: transparent;
+  color: var(--paper);
+  padding: 4px 0;
+}
+
+.card-like-btn[data-liked="true"] { color: var(--sig-job); }
+
+.draft-card .card-title { font-size: 20px; font-weight: 500; font-family: var(--font-body); }
+
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 18px 0;
+}
+
+.comment-sheet .close-btn { position: absolute; top: 12px; right: 12px; }
+.comment-sheet { position: relative; padding-top: 44px; }
+.comment-sheet-thread { max-height: 40vh; overflow-y: auto; margin-bottom: 12px; }
+
+.comment-item.comment-hermes { border-left-color: var(--sig-paper); }
+
+.log-group {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+}
+.log-group .type { color: var(--sig-paper); font-size: 11px; text-transform: uppercase; margin-bottom: 8px; }
+.log-group-row {
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 6px 0 6px 10px;
+  border-left: 2px solid var(--line);
 }
 
 /* ---- detail overlay ---- */

@@ -19,24 +19,32 @@ PORT = 8787
 
 sys.path.insert(0, str(ROOT / "extract"))
 import weekly_summary  # noqa: E402
+import entity_reply  # noqa: E402
 
 
-ATTRIBUTABLE_TABLES = ("todos", "drafts", "todo_comments")
+# (table, column, sqlite type) -- columns added after these tables already existed
+# in the wild get migrated in place here rather than via schema.sql (ALTER TABLE has
+# no "IF NOT EXISTS", and a duplicate-column error would abort the whole executescript).
+MIGRATED_COLUMNS = [
+    ("todos", "created_by", "TEXT"),
+    ("drafts", "created_by", "TEXT"),
+    ("todo_comments", "created_by", "TEXT"),
+    ("entities", "liked_at", "TEXT"),
+]
 
 
-def _ensure_created_by_columns(conn: sqlite3.Connection) -> None:
-    """created_by was added after these tables existed in the wild -- migrate in place."""
-    for table in ATTRIBUTABLE_TABLES:
+def _ensure_migrated_columns(conn: sqlite3.Connection) -> None:
+    for table, column, coltype in MIGRATED_COLUMNS:
         cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-        if "created_by" not in cols:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN created_by TEXT")
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
 
 
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA_PATH.read_text())
-    _ensure_created_by_columns(conn)
+    _ensure_migrated_columns(conn)
     return conn
 
 
@@ -129,24 +137,49 @@ class Handler(BaseHTTPRequestHandler):
             include_seen = params.get("include_seen", ["0"])[0] == "1"
             entity_type = params.get("type", [None])[0]
             title_query = params.get("q", [None])[0]
+            # No explicit type -> the main reel, scoped to papers (+ pending drafts, merged below).
+            # An explicit ?type= (e.g. Hermes's dedup checks) bypasses this scoping entirely.
+            scoped_to_papers = entity_type is None
 
             clauses = [] if include_seen else ["id NOT IN (SELECT entity_id FROM entity_views)"]
             sql_params: list = []
             if entity_type:
                 clauses.append("type = ?")
                 sql_params.append(entity_type)
+            elif scoped_to_papers:
+                clauses.append("type = 'paper'")
             if title_query:
                 clauses.append("title LIKE ?")
                 sql_params.append(f"%{title_query}%")
             where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-            sql_params.extend([limit, offset])
 
             rows = query(
-                f"SELECT * FROM entities {where} "
-                "ORDER BY novelty_score DESC, last_seen_date DESC LIMIT ? OFFSET ?",
+                f"SELECT * FROM entities {where} ORDER BY novelty_score DESC, last_seen_date DESC",
                 tuple(sql_params),
             )
-            self._send_json([deserialize_entity(r) for r in rows])
+            items = [deserialize_entity(r) for r in rows]
+
+            if scoped_to_papers and not title_query:
+                draft_rows = query(
+                    "SELECT * FROM drafts WHERE status = 'pending' ORDER BY created_at DESC"
+                )
+                for d in draft_rows:
+                    items.append({
+                        "id": d["id"],
+                        "type": "draft",
+                        "title": f"{d['platform']} post",
+                        "one_liner": d["content"][:120],
+                        "summary": d["content"],
+                        "raw_url": None,
+                        "tags": [],
+                        "extra": {"platform": d["platform"]},
+                        "novelty_score": 1.0,
+                        "first_seen_date": d["created_at"][:10],
+                        "last_seen_date": d["created_at"][:10],
+                    })
+                items.sort(key=lambda e: (e["novelty_score"], e["last_seen_date"]), reverse=True)
+
+            self._send_json(items[offset:offset + limit])
             return
 
         if parsed.path.startswith("/api/entity/"):
@@ -159,6 +192,10 @@ class Handler(BaseHTTPRequestHandler):
             entity["mentions"] = query(
                 "SELECT date, source_agent, source_section, context_snippet FROM mentions "
                 "WHERE entity_id = ? ORDER BY date DESC",
+                (entity_id,),
+            )
+            entity["comments"] = query(
+                "SELECT * FROM entity_comments WHERE entity_id = ? ORDER BY created_at ASC",
                 (entity_id,),
             )
             self._send_json(entity)
@@ -287,6 +324,54 @@ class Handler(BaseHTTPRequestHandler):
                 (str(uuid.uuid4()), entity_id, action, dt.datetime.now().astimezone().isoformat()),
             )
             self._send_json({"ok": True}, status=201)
+            return
+
+        if parsed.path.startswith("/api/entity/") and parsed.path.endswith("/comments"):
+            entity_id = parsed.path.split("/")[3]
+            rows = query("SELECT * FROM entities WHERE id = ?", (entity_id,))
+            if not rows:
+                self._send_json({"error": "not found"}, status=404)
+                return
+            entity = deserialize_entity(rows[0])
+            body = self._read_json_body()
+            text = (body.get("body") or "").strip()
+            if not text:
+                self._send_json({"error": "body required"}, status=400)
+                return
+
+            now = dt.datetime.now().astimezone().isoformat()
+            comment_id = str(uuid.uuid4())
+            execute(
+                "INSERT INTO entity_comments (id, entity_id, body, author, created_at) "
+                "VALUES (?, ?, ?, 'user', ?)",
+                (comment_id, entity_id, text, now),
+            )
+            comment = query("SELECT * FROM entity_comments WHERE id = ?", (comment_id,))[0]
+
+            reply_text = entity_reply.generate_reply(entity, text)
+            reply = None
+            if reply_text:
+                reply_id = str(uuid.uuid4())
+                reply_now = dt.datetime.now().astimezone().isoformat()
+                execute(
+                    "INSERT INTO entity_comments (id, entity_id, body, author, created_at) "
+                    "VALUES (?, ?, ?, 'hermes', ?)",
+                    (reply_id, entity_id, reply_text, reply_now),
+                )
+                reply = query("SELECT * FROM entity_comments WHERE id = ?", (reply_id,))[0]
+
+            self._send_json({"comment": comment, "reply": reply}, status=201)
+            return
+
+        if parsed.path.startswith("/api/entity/") and parsed.path.endswith("/like"):
+            entity_id = parsed.path.split("/")[3]
+            rows = query("SELECT liked_at FROM entities WHERE id = ?", (entity_id,))
+            if not rows:
+                self._send_json({"error": "not found"}, status=404)
+                return
+            new_value = None if rows[0]["liked_at"] else dt.datetime.now().astimezone().isoformat()
+            execute("UPDATE entities SET liked_at = ? WHERE id = ?", (new_value, entity_id))
+            self._send_json({"liked_at": new_value})
             return
 
         if parsed.path == "/api/drafts":
