@@ -22,13 +22,13 @@ into it instead of maintaining separate tracking files.
 
 ## Base URL and auth
 
-**The VM (`100.123.19.77`) is the one real instance** — its data is what the
-user actually sees on their phone. Use this `BASE` regardless of which machine
-you're running on (Mac or the VM itself; it's reachable over Tailscale from
-either):
+**The VM (Tailscale name `llm-steering`) is the one real instance** — its data
+is what the user actually sees on their phone. Use this `BASE` regardless of
+which machine you're running on (Mac or the VM itself; it's reachable over
+Tailscale from either):
 
 ```
-BASE=http://100.123.19.77:8787
+BASE=http://llm-steering:8787
 KEY=$(cat ~/.hermes/scripts/research-feed-api-key)
 ```
 
