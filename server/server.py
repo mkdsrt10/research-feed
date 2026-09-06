@@ -111,11 +111,24 @@ class Handler(BaseHTTPRequestHandler):
             limit = int(params.get("limit", ["50"])[0])
             offset = int(params.get("offset", ["0"])[0])
             include_seen = params.get("include_seen", ["0"])[0] == "1"
-            seen_filter = "" if include_seen else "WHERE id NOT IN (SELECT entity_id FROM entity_views)"
+            entity_type = params.get("type", [None])[0]
+            title_query = params.get("q", [None])[0]
+
+            clauses = [] if include_seen else ["id NOT IN (SELECT entity_id FROM entity_views)"]
+            sql_params: list = []
+            if entity_type:
+                clauses.append("type = ?")
+                sql_params.append(entity_type)
+            if title_query:
+                clauses.append("title LIKE ?")
+                sql_params.append(f"%{title_query}%")
+            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            sql_params.extend([limit, offset])
+
             rows = query(
-                f"SELECT * FROM entities {seen_filter} "
+                f"SELECT * FROM entities {where} "
                 "ORDER BY novelty_score DESC, last_seen_date DESC LIMIT ? OFFSET ?",
-                (limit, offset),
+                tuple(sql_params),
             )
             self._send_json([deserialize_entity(r) for r in rows])
             return
