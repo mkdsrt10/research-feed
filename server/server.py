@@ -145,6 +145,34 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(rows)
             return
 
+        if parsed.path == "/api/drafts":
+            status = params.get("status", [None])[0]
+            if status:
+                rows = query("SELECT * FROM drafts WHERE status = ? ORDER BY created_at DESC", (status,))
+            else:
+                rows = query("SELECT * FROM drafts ORDER BY created_at DESC")
+            self._send_json(rows)
+            return
+
+        if parsed.path == "/api/context/daily":
+            self._send_json({
+                "committed_todos": query(
+                    "SELECT id, title, due_date FROM todos WHERE status = 'committed' ORDER BY due_date ASC"
+                ),
+                "added_todos": query(
+                    "SELECT id, title, added_at FROM todos WHERE status = 'added' ORDER BY added_at DESC"
+                ),
+                "recent_comments": query(
+                    """SELECT tc.body, tc.created_at, t.title AS todo_title
+                       FROM todo_comments tc JOIN todos t ON t.id = tc.todo_id
+                       ORDER BY tc.created_at DESC LIMIT 10"""
+                ),
+                "pending_drafts": query(
+                    "SELECT id, platform, content FROM drafts WHERE status = 'pending' ORDER BY created_at DESC"
+                ),
+            })
+            return
+
         if parsed.path == "/" or parsed.path.startswith("/app"):
             self._serve_static(parsed.path)
             return
@@ -185,6 +213,24 @@ class Handler(BaseHTTPRequestHandler):
                 (str(uuid.uuid4()), entity_id, action, dt.datetime.now().astimezone().isoformat()),
             )
             self._send_json({"ok": True}, status=201)
+            return
+
+        if parsed.path == "/api/drafts":
+            body = self._read_json_body()
+            platform = (body.get("platform") or "").strip()
+            content = (body.get("content") or "").strip()
+            if platform not in ("x", "linkedin") or not content:
+                self._send_json({"error": "platform ('x'|'linkedin') and content required"}, status=400)
+                return
+            draft_id = str(uuid.uuid4())
+            execute(
+                """INSERT INTO drafts (id, platform, content, status, source_entity_id, source_todo_id, created_at)
+                   VALUES (?, ?, ?, 'pending', ?, ?, ?)""",
+                (draft_id, platform, content, body.get("source_entity_id"), body.get("source_todo_id"),
+                 dt.datetime.now().astimezone().isoformat()),
+            )
+            rows = query("SELECT * FROM drafts WHERE id = ?", (draft_id,))
+            self._send_json(rows[0], status=201)
             return
 
         if parsed.path == "/api/todos":
@@ -242,6 +288,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PATCH(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+
+        if parsed.path.startswith("/api/drafts/"):
+            draft_id = parsed.path.rsplit("/", 1)[-1]
+            if not query("SELECT id FROM drafts WHERE id = ?", (draft_id,)):
+                self._send_json({"error": "not found"}, status=404)
+                return
+            body = self._read_json_body()
+            status = body.get("status")
+            if status not in ("pending", "approved", "rejected", "posted"):
+                self._send_json({"error": "invalid status"}, status=400)
+                return
+            execute(
+                "UPDATE drafts SET status = ?, reviewed_at = ? WHERE id = ?",
+                (status, dt.datetime.now().astimezone().isoformat(), draft_id),
+            )
+            rows = query("SELECT * FROM drafts WHERE id = ?", (draft_id,))
+            self._send_json(rows[0])
+            return
+
         if not parsed.path.startswith("/api/todos/"):
             self._send_json({"error": "not found"}, status=404)
             return

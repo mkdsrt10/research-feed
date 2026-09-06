@@ -74,6 +74,19 @@ CREATE TABLE IF NOT EXISTS todo_comments (
 
 CREATE INDEX IF NOT EXISTS idx_todo_comments_todo ON todo_comments (todo_id);
 
+CREATE TABLE IF NOT EXISTS drafts (
+  id TEXT PRIMARY KEY,
+  platform TEXT NOT NULL,                  -- 'x' | 'linkedin'
+  content TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | rejected | posted
+  source_entity_id TEXT REFERENCES entities(id),
+  source_todo_id TEXT REFERENCES todos(id),
+  created_at TEXT NOT NULL,
+  reviewed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts (status);
+
 CREATE TABLE IF NOT EXISTS weekly_summaries (
   id TEXT PRIMARY KEY,
   generated_at TEXT NOT NULL,

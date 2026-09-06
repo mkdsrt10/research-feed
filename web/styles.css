@@ -404,6 +404,29 @@ h1, h2 { font-family: var(--font-display); }
 .section-tag.committed { color: var(--sig-paper); }
 .section-tag.added { color: var(--sig-person); }
 .section-tag.done { color: var(--sig-repo); }
+.section-tag.drafts { color: var(--sig-job); }
+
+.draft-item {
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.draft-platform {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--sig-job);
+}
+
+.draft-content {
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
 
 .todo-section h2 .hint {
   font-family: var(--font-body);

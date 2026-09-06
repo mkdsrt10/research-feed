@@ -401,7 +401,7 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     document.querySelectorAll(".screen").forEach((s) => s.classList.add("hidden"));
     btn.classList.add("active");
     document.getElementById(btn.dataset.tab).classList.remove("hidden");
-    if (btn.dataset.tab === "homeScreen") loadTodos();
+    if (btn.dataset.tab === "homeScreen") { loadTodos(); loadDrafts(); }
   });
 });
 
@@ -430,6 +430,52 @@ function todoItemHtml(todo) {
       </div>
     </div>`;
 }
+
+// ---- drafts ----
+
+const draftsListEl = document.getElementById("draftsList");
+
+function draftItemHtml(draft) {
+  return `
+    <div class="draft-item" data-id="${draft.id}">
+      <div class="draft-platform">[${escapeHtml(draft.platform)}]</div>
+      <div class="draft-content">${escapeHtml(draft.content)}</div>
+      <div class="todo-controls">
+        <button class="draft-approve-btn" data-id="${draft.id}">[ approve ]</button>
+        <button class="draft-reject-btn" data-id="${draft.id}">[ reject ]</button>
+      </div>
+    </div>`;
+}
+
+async function loadDrafts() {
+  const res = await fetch("/api/drafts?status=pending");
+  const drafts = await res.json();
+  draftsListEl.innerHTML = drafts.length
+    ? drafts.map(draftItemHtml).join("")
+    : '<p class="todo-empty">// no drafts pending</p>';
+}
+
+document.getElementById("homeScreen").addEventListener("click", async (event) => {
+  const approveBtn = event.target.closest(".draft-approve-btn");
+  if (approveBtn) {
+    await fetch(`/api/drafts/${approveBtn.dataset.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "approved" }),
+    });
+    loadDrafts();
+    return;
+  }
+  const rejectBtn = event.target.closest(".draft-reject-btn");
+  if (rejectBtn) {
+    await fetch(`/api/drafts/${rejectBtn.dataset.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "rejected" }),
+    });
+    loadDrafts();
+  }
+});
 
 async function loadTodos() {
   const [added, committed, done] = await Promise.all([
@@ -549,3 +595,4 @@ if ("serviceWorker" in navigator) {
 
 loadFeed();
 loadTodos();
+loadDrafts();
