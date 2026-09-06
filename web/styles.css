@@ -133,6 +133,12 @@ h1, h2 { font-family: var(--font-display); }
   margin-bottom: 14px;
 }
 
+.type-tag.small {
+  font-size: 10px;
+  padding: 2px 6px;
+  margin: 0 0 6px;
+}
+
 /* ---- screens & tabs ---- */
 
 .screen { height: 100vh; overflow-y: auto; }

@@ -64,6 +64,22 @@ def deserialize_entity(row: dict) -> dict:
     return row
 
 
+# Every todo read joins its linked entity (if any) so callers -- the UI and any
+# agent -- can tell what a todo is *about* (e.g. a person, for networking) without
+# a second round-trip.
+TODO_SELECT = """
+    SELECT t.*, e.type AS source_entity_type, e.title AS source_entity_title,
+           e.extra AS source_entity_extra
+    FROM todos t LEFT JOIN entities e ON e.id = t.source_entity_id
+"""
+
+
+def deserialize_todo(row: dict) -> dict:
+    if row.get("source_entity_extra"):
+        row["source_entity_extra"] = json.loads(row["source_entity_extra"])
+    return row
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send_json(self, payload, status: int = 200) -> None:
         body = json.dumps(payload).encode()
@@ -162,25 +178,31 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/todos":
             status = params.get("status", [None])[0]
+            entity_type = params.get("entity_type", [None])[0]
             order = {
-                "added": "added_at DESC",
-                "committed": "due_date ASC",
-                "done": "done_at DESC",
-            }.get(status, "added_at DESC")
+                "added": "t.added_at DESC",
+                "committed": "t.due_date ASC",
+                "done": "t.done_at DESC",
+            }.get(status, "t.added_at DESC")
+            clauses, sql_params = [], []
             if status in ("added", "committed", "done"):
-                rows = query(f"SELECT * FROM todos WHERE status = ? ORDER BY {order}", (status,))
-            else:
-                rows = query(f"SELECT * FROM todos ORDER BY {order}")
-            self._send_json(rows)
+                clauses.append("t.status = ?")
+                sql_params.append(status)
+            if entity_type:
+                clauses.append("e.type = ?")
+                sql_params.append(entity_type)
+            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            rows = query(f"{TODO_SELECT} {where} ORDER BY {order}", tuple(sql_params))
+            self._send_json([deserialize_todo(r) for r in rows])
             return
 
         if parsed.path.startswith("/api/todos/") and not parsed.path.endswith("/comments"):
             todo_id = parsed.path.rsplit("/", 1)[-1]
-            rows = query("SELECT * FROM todos WHERE id = ?", (todo_id,))
+            rows = query(f"{TODO_SELECT} WHERE t.id = ?", (todo_id,))
             if not rows:
                 self._send_json({"error": "not found"}, status=404)
                 return
-            todo = rows[0]
+            todo = deserialize_todo(rows[0])
             todo["comments"] = query(
                 "SELECT * FROM todo_comments WHERE todo_id = ? ORDER BY created_at ASC", (todo_id,)
             )
@@ -202,13 +224,18 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/context/daily":
+            committed = [deserialize_todo(r) for r in query(
+                f"{TODO_SELECT} WHERE t.status = 'committed' ORDER BY t.due_date ASC"
+            )]
+            added = [deserialize_todo(r) for r in query(
+                f"{TODO_SELECT} WHERE t.status = 'added' ORDER BY t.added_at DESC"
+            )]
             self._send_json({
-                "committed_todos": query(
-                    "SELECT id, title, due_date FROM todos WHERE status = 'committed' ORDER BY due_date ASC"
-                ),
-                "added_todos": query(
-                    "SELECT id, title, added_at FROM todos WHERE status = 'added' ORDER BY added_at DESC"
-                ),
+                "committed_todos": committed,
+                "added_todos": added,
+                "networking_todos": [
+                    t for t in committed + added if t.get("source_entity_type") == "person"
+                ],
                 "recent_comments": query(
                     """SELECT tc.body, tc.created_at, t.title AS todo_title
                        FROM todo_comments tc JOIN todos t ON t.id = tc.todo_id
@@ -301,8 +328,8 @@ class Handler(BaseHTTPRequestHandler):
                 (todo_id, title, body.get("notes"), body.get("source_entity_id"), now,
                  key["name"] if key else None),
             )
-            rows = query("SELECT * FROM todos WHERE id = ?", (todo_id,))
-            self._send_json(rows[0], status=201)
+            rows = query(f"{TODO_SELECT} WHERE t.id = ?", (todo_id,))
+            self._send_json(deserialize_todo(rows[0]), status=201)
             return
 
         if parsed.path.startswith("/api/todos/") and parsed.path.endswith("/comments"):
@@ -413,8 +440,8 @@ class Handler(BaseHTTPRequestHandler):
             values.append(todo_id)
             execute(f"UPDATE todos SET {', '.join(fields)} WHERE id = ?", tuple(values))
 
-        rows = query("SELECT * FROM todos WHERE id = ?", (todo_id,))
-        self._send_json(rows[0])
+        rows = query(f"{TODO_SELECT} WHERE t.id = ?", (todo_id,))
+        self._send_json(deserialize_todo(rows[0]))
 
     # ---- DELETE ----
 

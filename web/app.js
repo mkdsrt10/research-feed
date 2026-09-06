@@ -188,8 +188,13 @@ function todoDetailHtml(todo) {
         </div>`).join("")
     : '<p class="todo-empty">// no comments yet</p>';
 
+  const entityBadge = todo.source_entity_type
+    ? `<span class="type-tag" style="color: ${typeColor(todo.source_entity_type)}">[${escapeHtml(todo.source_entity_type)}]</span>`
+    : "";
+
   return `
     <span class="section-tag ${escapeHtml(todo.status)}">${escapeHtml(todo.status)}</span>
+    ${entityBadge}
     <h1>${escapeHtml(todo.title)}</h1>
     ${sourceLink}
     <div class="todo-controls" style="margin: 16px 0 24px;">
@@ -416,8 +421,12 @@ function todoItemHtml(todo) {
   const sourceLink = todo.source_entity_id
     ? `<a class="todo-source-link" data-open-entity="${todo.source_entity_id}" href="#">[ from feed → ]</a>`
     : "";
+  const entityBadge = todo.source_entity_type
+    ? `<span class="type-tag small" style="color: ${typeColor(todo.source_entity_type)}">[${escapeHtml(todo.source_entity_type)}]</span>`
+    : "";
   return `
     <div class="todo-item ${overdue ? "overdue" : ""}" data-id="${todo.id}">
+      ${entityBadge}
       <button class="todo-title todo-title-btn" data-open-todo="${todo.id}">${escapeHtml(todo.title)}</button>
       ${sourceLink}
       <div class="todo-controls">
