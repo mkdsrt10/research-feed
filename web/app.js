@@ -108,6 +108,30 @@ function bulletsHtml(text, maxBullets) {
   return `<ul class="card-bullets">${bullets.map((b) => `<li>${escapeHtml(b)}</li>`).join("")}</ul>`;
 }
 
+// Flips a like/save-style toggle button's state and label immediately (no
+// waiting on the network round-trip), fires the request in the background,
+// and only corrects the button if the server actually disagreed or the
+// request failed outright.
+function optimisticToggle(btn, datasetKey, url, onText, offText) {
+  const wasOn = btn.dataset[datasetKey] === "true";
+  const nowOn = !wasOn;
+  btn.dataset[datasetKey] = String(nowOn);
+  btn.textContent = nowOn ? onText : offText;
+  fetch(url, { method: "POST" })
+    .then((res) => res.json())
+    .then((data) => {
+      const actual = !!Object.values(data)[0];
+      if (actual !== nowOn) {
+        btn.dataset[datasetKey] = String(actual);
+        btn.textContent = actual ? onText : offText;
+      }
+    })
+    .catch(() => {
+      btn.dataset[datasetKey] = String(wasOn);
+      btn.textContent = wasOn ? onText : offText;
+    });
+}
+
 function commentItemHtml(c) {
   return `
     <div class="comment-item ${c.author === "hermes" ? "comment-hermes" : ""}">
@@ -353,10 +377,7 @@ feedEl.addEventListener("click", async (event) => {
   const likeBtn = event.target.closest(".card-like-btn");
   if (likeBtn) {
     event.stopPropagation();
-    const res = await fetch(`/api/entity/${likeBtn.dataset.likeId}/like`, { method: "POST" });
-    const { liked_at } = await res.json();
-    likeBtn.dataset.liked = String(!!liked_at);
-    likeBtn.textContent = liked_at ? "[ ♥ ]" : "[ ♡ ]";
+    optimisticToggle(likeBtn, "liked", `/api/entity/${likeBtn.dataset.likeId}/like`, "[ ♥ ]", "[ ♡ ]");
     return;
   }
   const commentBtn = event.target.closest(".card-comment-btn");
@@ -370,32 +391,33 @@ feedEl.addEventListener("click", async (event) => {
   const saveBtn = event.target.closest(".card-save-btn");
   if (saveBtn) {
     event.stopPropagation();
-    const res = await fetch(`/api/entity/${saveBtn.dataset.saveId}/save`, { method: "POST" });
-    const { saved_at } = await res.json();
-    saveBtn.dataset.saved = String(!!saved_at);
-    saveBtn.textContent = saved_at ? "[ ✓ later ]" : "[ later ]";
+    optimisticToggle(saveBtn, "saved", `/api/entity/${saveBtn.dataset.saveId}/save`, "[ ✓ later ]", "[ later ]");
     return;
   }
   const approveBtn = event.target.closest(".draft-approve-btn");
   if (approveBtn) {
     event.stopPropagation();
-    await fetch(`/api/drafts/${approveBtn.dataset.id}`, {
+    const draftCard = approveBtn.closest(".card");
+    if (draftCard) draftCard.classList.add("removing");
+    fetch(`/api/drafts/${approveBtn.dataset.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "approved" }),
-    });
-    loadFeed();
+    }).catch(() => loadFeed());
+    setTimeout(() => draftCard && draftCard.remove(), 150);
     return;
   }
   const rejectBtn = event.target.closest(".draft-reject-btn");
   if (rejectBtn) {
     event.stopPropagation();
-    await fetch(`/api/drafts/${rejectBtn.dataset.id}`, {
+    const draftCard2 = rejectBtn.closest(".card");
+    if (draftCard2) draftCard2.classList.add("removing");
+    fetch(`/api/drafts/${rejectBtn.dataset.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "rejected" }),
-    });
-    loadFeed();
+    }).catch(() => loadFeed());
+    setTimeout(() => draftCard2 && draftCard2.remove(), 150);
     return;
   }
   const card = event.target.closest(".card");
@@ -430,20 +452,47 @@ function closeCommentSheet() {
 document.getElementById("entityCommentForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const input = document.getElementById("entityCommentInput");
+  const submitBtn = event.target.querySelector("button[type=submit]");
   const text = input.value.trim();
   if (!text || !activeCommentEntityId) return;
   input.value = "";
   input.disabled = true;
-  const res = await fetch(`/api/entity/${activeCommentEntityId}/comments`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ body: text }),
-  });
-  const { comment, reply } = await res.json();
+  submitBtn.disabled = true;
+
   if (entityCommentThreadEl.querySelector(".todo-empty")) entityCommentThreadEl.innerHTML = "";
-  entityCommentThreadEl.insertAdjacentHTML("beforeend", commentItemHtml(comment));
-  if (reply) entityCommentThreadEl.insertAdjacentHTML("beforeend", commentItemHtml(reply));
-  input.disabled = false;
+  entityCommentThreadEl.insertAdjacentHTML(
+    "beforeend",
+    commentItemHtml({ author: "user", created_at: new Date().toISOString(), body: text })
+  );
+  const thinkingId = `thinking-${Date.now()}`;
+  entityCommentThreadEl.insertAdjacentHTML(
+    "beforeend",
+    `<div class="comment-item comment-hermes comment-thinking" id="${thinkingId}">
+       <div class="comment-meta">hermes</div>
+       <div class="comment-body">// thinking…</div>
+     </div>`
+  );
+  entityCommentThreadEl.scrollTop = entityCommentThreadEl.scrollHeight;
+
+  try {
+    const res = await fetch(`/api/entity/${activeCommentEntityId}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: text }),
+    });
+    const { reply } = await res.json();
+    const placeholder = document.getElementById(thinkingId);
+    if (placeholder) {
+      if (reply) placeholder.outerHTML = commentItemHtml(reply);
+      else placeholder.remove();
+    }
+  } catch {
+    const placeholder = document.getElementById(thinkingId);
+    if (placeholder) placeholder.remove();
+  } finally {
+    input.disabled = false;
+    submitBtn.disabled = false;
+  }
 });
 
 document.getElementById("entityCommentClose").addEventListener("click", closeCommentSheet);
@@ -477,6 +526,8 @@ detailContentEl.addEventListener("click", async (event) => {
   const doneBtn = event.target.closest(".todo-detail-done");
   if (doneBtn) {
     const isDone = doneBtn.dataset.done === "true";
+    doneBtn.disabled = true;
+    doneBtn.textContent = "[ … ]";
     await fetch(`/api/todos/${doneBtn.dataset.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -488,8 +539,10 @@ detailContentEl.addEventListener("click", async (event) => {
   }
   const deleteBtn = event.target.closest(".todo-detail-delete");
   if (deleteBtn) {
-    await fetch(`/api/todos/${deleteBtn.dataset.id}`, { method: "DELETE" });
+    deleteBtn.disabled = true;
+    deleteBtn.textContent = "[ … ]";
     detailEl.classList.add("hidden");
+    fetch(`/api/todos/${deleteBtn.dataset.id}`, { method: "DELETE" });
     loadTodos();
     return;
   }
@@ -520,8 +573,11 @@ detailContentEl.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.target;
     const input = document.getElementById("todoCommentInput");
+    const submitBtn = form.querySelector("button[type=submit]");
     const text = input.value.trim();
     if (!text) return;
+    input.value = "";
+    submitBtn.disabled = true;
     await fetch(`/api/todos/${form.dataset.id}/comments`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -534,21 +590,47 @@ detailContentEl.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.target;
     const input = document.getElementById("detailCommentInput");
+    const submitBtn = form.querySelector("button[type=submit]");
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
     input.disabled = true;
-    const res = await fetch(`/api/entity/${form.dataset.id}/comments`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ body: text }),
-    });
-    const { comment, reply } = await res.json();
+    submitBtn.disabled = true;
+
     const list = document.getElementById("detailCommentList");
     if (list.querySelector(".todo-empty")) list.innerHTML = "";
-    list.insertAdjacentHTML("beforeend", commentItemHtml(comment));
-    if (reply) list.insertAdjacentHTML("beforeend", commentItemHtml(reply));
-    input.disabled = false;
+    list.insertAdjacentHTML(
+      "beforeend",
+      commentItemHtml({ author: "user", created_at: new Date().toISOString(), body: text })
+    );
+    const thinkingId = `thinking-${Date.now()}`;
+    list.insertAdjacentHTML(
+      "beforeend",
+      `<div class="comment-item comment-hermes comment-thinking" id="${thinkingId}">
+         <div class="comment-meta">hermes</div>
+         <div class="comment-body">// thinking…</div>
+       </div>`
+    );
+
+    try {
+      const res = await fetch(`/api/entity/${form.dataset.id}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: text }),
+      });
+      const { reply } = await res.json();
+      const placeholder = document.getElementById(thinkingId);
+      if (placeholder) {
+        if (reply) placeholder.outerHTML = commentItemHtml(reply);
+        else placeholder.remove();
+      }
+    } catch {
+      const placeholder = document.getElementById(thinkingId);
+      if (placeholder) placeholder.remove();
+    } finally {
+      input.disabled = false;
+      submitBtn.disabled = false;
+    }
   }
 });
 
@@ -797,6 +879,8 @@ document.getElementById("quickAddForm").addEventListener("submit", async (event)
 
 document.getElementById("homeScreen").addEventListener("change", async (event) => {
   if (event.target.classList.contains("due-input")) {
+    const row = event.target.closest(".todo-item");
+    if (row) row.classList.add("pending");
     await fetch(`/api/todos/${event.target.dataset.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -815,6 +899,8 @@ document.getElementById("homeScreen").addEventListener("click", async (event) =>
   const doneBtn = event.target.closest(".done-btn");
   if (doneBtn) {
     const isDone = doneBtn.dataset.done === "true";
+    const row = doneBtn.closest(".todo-item");
+    if (row) row.classList.add("pending");
     await fetch(`/api/todos/${doneBtn.dataset.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -825,8 +911,10 @@ document.getElementById("homeScreen").addEventListener("click", async (event) =>
   }
   const deleteBtn = event.target.closest(".delete-btn");
   if (deleteBtn) {
-    await fetch(`/api/todos/${deleteBtn.dataset.id}`, { method: "DELETE" });
-    loadTodos();
+    const row = deleteBtn.closest(".todo-item");
+    if (row) row.classList.add("removing");
+    fetch(`/api/todos/${deleteBtn.dataset.id}`, { method: "DELETE" }).catch(() => loadTodos());
+    setTimeout(() => row && row.remove(), 150);
     return;
   }
   const sourceLink = event.target.closest("[data-open-entity]");
