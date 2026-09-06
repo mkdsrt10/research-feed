@@ -140,6 +140,7 @@ function draftCardHtml(draft, index) {
 function cardHtml(entity, index) {
   if (entity.type === "draft") return draftCardHtml(entity, index);
   const liked = !!entity.liked_at;
+  const saved = !!entity.saved_at;
   return `
     <div class="card" data-id="${entity.id}">
       <button class="card-add-btn" data-add-id="${entity.id}" aria-label="Add to todo">[ + ]</button>
@@ -150,6 +151,7 @@ function cardHtml(entity, index) {
       <div class="card-footer">
         <button class="card-like-btn" data-like-id="${entity.id}" data-liked="${liked}">${liked ? "[ ♥ ]" : "[ ♡ ]"}</button>
         <button class="card-comment-btn" data-comment-id="${entity.id}">[ comment ]</button>
+        <button class="card-save-btn" data-save-id="${entity.id}" data-saved="${saved}">${saved ? "[ ✓ later ]" : "[ later ]"}</button>
         <span class="card-hint">tap for detail</span>
       </div>
     </div>`;
@@ -175,6 +177,7 @@ function detailHtml(entity, index) {
     <div class="detail-actions">
       ${link}
       <button class="entity-like-btn add-todo-btn" data-id="${entity.id}" data-liked="${liked}">${liked ? "[ ♥ liked ]" : "[ ♡ like ]"}</button>
+      <button class="entity-save-btn add-todo-btn" data-id="${entity.id}" data-saved="${!!entity.saved_at}">${entity.saved_at ? "[ ✓ saved for later ]" : "[ save for later ]"}</button>
       <button id="detailAddTodo" class="add-todo-btn">[ add to todo ]</button>
     </div>
     <h2>comments</h2>
@@ -364,6 +367,15 @@ feedEl.addEventListener("click", async (event) => {
     openCommentSheet(commentBtn.dataset.commentId, titleEl ? titleEl.textContent : "");
     return;
   }
+  const saveBtn = event.target.closest(".card-save-btn");
+  if (saveBtn) {
+    event.stopPropagation();
+    const res = await fetch(`/api/entity/${saveBtn.dataset.saveId}/save`, { method: "POST" });
+    const { saved_at } = await res.json();
+    saveBtn.dataset.saved = String(!!saved_at);
+    saveBtn.textContent = saved_at ? "[ ✓ later ]" : "[ later ]";
+    return;
+  }
   const approveBtn = event.target.closest(".draft-approve-btn");
   if (approveBtn) {
     event.stopPropagation();
@@ -452,6 +464,14 @@ detailContentEl.addEventListener("click", async (event) => {
     const { liked_at } = await res.json();
     likeBtn.dataset.liked = String(!!liked_at);
     likeBtn.textContent = liked_at ? "[ ♥ liked ]" : "[ ♡ like ]";
+    return;
+  }
+  const saveBtn = event.target.closest(".entity-save-btn");
+  if (saveBtn) {
+    const res = await fetch(`/api/entity/${saveBtn.dataset.id}/save`, { method: "POST" });
+    const { saved_at } = await res.json();
+    saveBtn.dataset.saved = String(!!saved_at);
+    saveBtn.textContent = saved_at ? "[ ✓ saved for later ]" : "[ save for later ]";
     return;
   }
   const doneBtn = event.target.closest(".todo-detail-done");
@@ -623,6 +643,32 @@ document.getElementById("logToggle").addEventListener("click", () => {
 
 document.getElementById("closeLog").addEventListener("click", () => {
   logViewEl.classList.add("hidden");
+});
+
+const savedViewEl = document.getElementById("savedView");
+const savedListEl = document.getElementById("savedList");
+
+async function loadSaved() {
+  const res = await fetch("/api/saved");
+  const entities = await res.json();
+  savedListEl.innerHTML = entities.length ? renderLogGroups(entities) : "<p>Nothing saved for later.</p>";
+}
+
+document.getElementById("savedToggle").addEventListener("click", () => {
+  loadSaved();
+  savedViewEl.classList.remove("hidden");
+});
+
+document.getElementById("closeSaved").addEventListener("click", () => {
+  savedViewEl.classList.add("hidden");
+});
+
+savedListEl.addEventListener("click", (event) => {
+  const item = event.target.closest(".log-item, .log-group-row");
+  if (item) {
+    savedViewEl.classList.add("hidden");
+    openDetail(item.dataset.id);
+  }
 });
 
 logDateEl.addEventListener("change", () => loadLog(logDateEl.value));

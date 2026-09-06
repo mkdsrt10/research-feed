@@ -72,6 +72,8 @@ h1, h2 { font-family: var(--font-display); }
   padding: 10px 12px;
 }
 
+.bracket-btn.floating-2 { bottom: 130px; }
+
 .close-btn {
   position: fixed;
   top: 16px;

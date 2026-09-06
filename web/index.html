@@ -63,6 +63,7 @@
   <div id="feedScreen" class="screen hidden">
     <div id="feed" class="feed"></div>
     <button id="logToggle" class="bracket-btn floating">[ log ]</button>
+    <button id="savedToggle" class="bracket-btn floating floating-2">[ later ]</button>
     <div id="logView" class="log-view hidden">
       <div class="log-header">
         <span class="quick-add-caret">&gt;</span>
@@ -70,6 +71,13 @@
         <button id="closeLog" class="close-btn" aria-label="Close">[×]</button>
       </div>
       <div id="logList" class="log-list"></div>
+    </div>
+    <div id="savedView" class="log-view hidden">
+      <div class="log-header">
+        <span>saved for later</span>
+        <button id="closeSaved" class="close-btn" aria-label="Close">[×]</button>
+      </div>
+      <div id="savedList" class="log-list"></div>
     </div>
   </div>
 

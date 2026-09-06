@@ -30,6 +30,7 @@ MIGRATED_COLUMNS = [
     ("drafts", "created_by", "TEXT"),
     ("todo_comments", "created_by", "TEXT"),
     ("entities", "liked_at", "TEXT"),
+    ("entities", "saved_at", "TEXT"),
 ]
 
 
@@ -251,6 +252,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(rows)
             return
 
+        if parsed.path == "/api/saved":
+            rows = query("SELECT * FROM entities WHERE saved_at IS NOT NULL ORDER BY saved_at DESC")
+            self._send_json([deserialize_entity(r) for r in rows])
+            return
+
         if parsed.path == "/api/drafts":
             status = params.get("status", [None])[0]
             if status:
@@ -372,6 +378,17 @@ class Handler(BaseHTTPRequestHandler):
             new_value = None if rows[0]["liked_at"] else dt.datetime.now().astimezone().isoformat()
             execute("UPDATE entities SET liked_at = ? WHERE id = ?", (new_value, entity_id))
             self._send_json({"liked_at": new_value})
+            return
+
+        if parsed.path.startswith("/api/entity/") and parsed.path.endswith("/save"):
+            entity_id = parsed.path.split("/")[3]
+            rows = query("SELECT saved_at FROM entities WHERE id = ?", (entity_id,))
+            if not rows:
+                self._send_json({"error": "not found"}, status=404)
+                return
+            new_value = None if rows[0]["saved_at"] else dt.datetime.now().astimezone().isoformat()
+            execute("UPDATE entities SET saved_at = ? WHERE id = ?", (new_value, entity_id))
+            self._send_json({"saved_at": new_value})
             return
 
         if parsed.path == "/api/drafts":
