@@ -22,10 +22,19 @@ into it instead of maintaining separate tracking files.
 
 ## Base URL and auth
 
+**The VM (`100.123.19.77`) is the one real instance** — its data is what the
+user actually sees on their phone. Use this `BASE` regardless of which machine
+you're running on (Mac or the VM itself; it's reachable over Tailscale from
+either):
+
 ```
-BASE=http://localhost:8787
+BASE=http://100.123.19.77:8787
 KEY=$(cat ~/.hermes/scripts/research-feed-api-key)
 ```
+
+A copy of the app may also be running on `localhost:8787` on the Mac — that is
+a **dev-only sandbox** for testing changes to the app itself, not a place to
+read or write real todos/tracking data. Never treat it as a source of truth.
 
 Every write (`POST`/`PATCH`/`DELETE`) needs the key as a header:
 
