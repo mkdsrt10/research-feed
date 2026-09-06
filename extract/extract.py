@@ -51,7 +51,11 @@ Output ONLY a JSON array (no prose, no markdown fences) where each element match
   "type": one of "paper" | "person" | "repo" | "job",
   "title": short name/title of the thing,
   "one_liner": a punchy <15 word caption suitable for a swipeable feed card,
-  "summary": 2-5 sentence detail body,
+  "summary": the ACTUAL core content, not a generic paraphrase -- concrete numbers, results, \
+methodology, or claims exactly as reported in the source text. Prefer specifics over \
+characterization (e.g. "100% TwoRoom, 98% PushT, 87% OGBench-Cube with state alignment" beats \
+"the paper shows improved planning results"). Can run up to ~8 sentences if the source has that \
+much real detail, but never invent detail beyond what's actually in the text,
   "raw_url": the best single source URL for this entity, or null if none,
   "tags": array of short topic tags,
   "extra": object of any type-specific fields worth keeping (e.g. for "person": \
@@ -176,8 +180,16 @@ def upsert_entity(conn: sqlite3.Connection, entity: dict, date: str, source_agen
         best_novelty = max(row[0], novelty)
         last_seen = max(row[1], date)
         conn.execute(
-            "UPDATE entities SET novelty_score = ?, last_seen_date = ? WHERE id = ?",
-            (best_novelty, last_seen, existing_id),
+            """UPDATE entities
+               SET novelty_score = ?, last_seen_date = ?, title = ?, one_liner = ?,
+                   summary = ?, raw_url = ?, tags = ?, extra = ?
+               WHERE id = ?""",
+            (
+                best_novelty, last_seen, entity.get("title", ""), entity.get("one_liner"),
+                entity.get("summary"), entity.get("raw_url"),
+                json.dumps(entity.get("tags") or []), json.dumps(entity.get("extra") or {}),
+                existing_id,
+            ),
         )
         entity_id = existing_id
     else:

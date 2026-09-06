@@ -1,4 +1,5 @@
 data/research.db
+data/seed.sql
 extract/state.json
 logs/
 __pycache__/

@@ -46,6 +46,25 @@ CREATE TABLE IF NOT EXISTS todos (
 
 CREATE INDEX IF NOT EXISTS idx_todos_status ON todos (status);
 
+CREATE TABLE IF NOT EXISTS entity_views (
+  id TEXT PRIMARY KEY,
+  entity_id TEXT NOT NULL REFERENCES entities(id),
+  viewed_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  context TEXT NOT NULL              -- 'card' | 'detail'
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_views_entity ON entity_views (entity_id);
+
+CREATE TABLE IF NOT EXISTS entity_interactions (
+  id TEXT PRIMARY KEY,
+  entity_id TEXT NOT NULL REFERENCES entities(id),
+  action TEXT NOT NULL,              -- 'open_detail' | 'open_source' | 'add_todo'
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_interactions_entity ON entity_interactions (entity_id);
+
 CREATE TABLE IF NOT EXISTS todo_comments (
   id TEXT PRIMARY KEY,
   todo_id TEXT NOT NULL REFERENCES todos(id),

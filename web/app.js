@@ -8,6 +8,56 @@ const logDateEl = document.getElementById("logDate");
 let currentDetailEntity = null;
 let currentDetailTodoId = null;
 
+// ---- view/interaction tracking ----
+
+function logView(entityId, durationMs, context) {
+  if (!entityId || durationMs < 1000) return;
+  fetch(`/api/entity/${entityId}/view`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ duration_ms: Math.round(durationMs), context }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+function logInteraction(entityId, action) {
+  if (!entityId) return;
+  fetch(`/api/entity/${entityId}/interact`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+const cardEnterTimes = new Map();
+
+function flushOpenCardViews() {
+  const now = Date.now();
+  cardEnterTimes.forEach((enteredAt, entityId) => {
+    logView(entityId, now - enteredAt, "card");
+  });
+  cardEnterTimes.clear();
+}
+
+let detailViewEntityId = null;
+let detailViewStart = null;
+
+function flushDetailView() {
+  if (detailViewEntityId && detailViewStart) {
+    logView(detailViewEntityId, Date.now() - detailViewStart, "detail");
+  }
+  detailViewEntityId = null;
+  detailViewStart = null;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    flushOpenCardViews();
+    flushDetailView();
+  }
+});
+
 function formatTs(iso) {
   return (iso || "").replace("T", " ").slice(0, 16);
 }
@@ -87,7 +137,15 @@ function observeCards() {
   const observer = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
-        if (entry.isIntersecting) entry.target.classList.add("in-view");
+        const entityId = entry.target.dataset.id;
+        if (entry.isIntersecting) {
+          entry.target.classList.add("in-view");
+          if (!cardEnterTimes.has(entityId)) cardEnterTimes.set(entityId, Date.now());
+        } else if (cardEnterTimes.has(entityId)) {
+          const enteredAt = cardEnterTimes.get(entityId);
+          cardEnterTimes.delete(entityId);
+          logView(entityId, Date.now() - enteredAt, "card");
+        }
       });
     },
     { threshold: 0.5 }
@@ -105,12 +163,16 @@ async function loadFeed() {
 async function openDetail(id) {
   const res = await fetch(`/api/entity/${id}`);
   if (!res.ok) return;
+  flushDetailView();
   const entity = await res.json();
   currentDetailEntity = entity;
   currentDetailTodoId = null;
   const index = feedEntities.findIndex((e) => e.id === id);
   detailContentEl.innerHTML = detailHtml(entity, index >= 0 ? index : 0);
   detailEl.classList.remove("hidden");
+  detailViewEntityId = id;
+  detailViewStart = Date.now();
+  logInteraction(id, "open_detail");
 }
 
 function todoDetailHtml(todo) {
@@ -149,6 +211,7 @@ function todoDetailHtml(todo) {
 async function openTodoDetail(id) {
   const res = await fetch(`/api/todos/${id}`);
   if (!res.ok) return;
+  flushDetailView();
   const todo = await res.json();
   currentDetailEntity = null;
   currentDetailTodoId = id;
@@ -205,6 +268,7 @@ async function confirmAddTodo() {
     triggerEl.classList.add("added");
     triggerEl.textContent = triggerEl.classList.contains("card-add-btn") ? "[ ✓ ]" : "[ added ✓ ]";
   }
+  logInteraction(entity.id, "add_todo");
   closeAddTodoPrompt();
 }
 
@@ -229,6 +293,10 @@ detailContentEl.addEventListener("click", async (event) => {
   if (event.target.id === "detailAddTodo" && currentDetailEntity) {
     openAddTodoPrompt(currentDetailEntity, event.target);
     return;
+  }
+  const sourceOpenLink = event.target.closest(".source-link");
+  if (sourceOpenLink && currentDetailEntity) {
+    logInteraction(currentDetailEntity.id, "open_source");
   }
   const doneBtn = event.target.closest(".todo-detail-done");
   if (doneBtn) {
@@ -287,6 +355,7 @@ detailContentEl.addEventListener("submit", async (event) => {
 });
 
 document.getElementById("closeDetail").addEventListener("click", () => {
+  flushDetailView();
   detailEl.classList.add("hidden");
 });
 
@@ -327,6 +396,7 @@ logListEl.addEventListener("click", (event) => {
 
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
+    if (btn.dataset.tab !== "feedScreen") flushOpenCardViews();
     document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
     document.querySelectorAll(".screen").forEach((s) => s.classList.add("hidden"));
     btn.classList.add("active");

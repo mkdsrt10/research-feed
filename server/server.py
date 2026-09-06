@@ -76,8 +76,11 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/feed":
             limit = int(params.get("limit", ["50"])[0])
             offset = int(params.get("offset", ["0"])[0])
+            include_seen = params.get("include_seen", ["0"])[0] == "1"
+            seen_filter = "" if include_seen else "WHERE id NOT IN (SELECT entity_id FROM entity_views)"
             rows = query(
-                "SELECT * FROM entities ORDER BY novelty_score DESC, last_seen_date DESC LIMIT ? OFFSET ?",
+                f"SELECT * FROM entities {seen_filter} "
+                "ORDER BY novelty_score DESC, last_seen_date DESC LIMIT ? OFFSET ?",
                 (limit, offset),
             )
             self._send_json([deserialize_entity(r) for r in rows])
@@ -152,6 +155,37 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+
+        if parsed.path.startswith("/api/entity/") and parsed.path.endswith("/view"):
+            entity_id = parsed.path.split("/")[3]
+            body = self._read_json_body()
+            duration_ms = int(body.get("duration_ms") or 0)
+            context = body.get("context") or "card"
+            if duration_ms < 1000:
+                self._send_json({"skipped": True})
+                return
+            execute(
+                "INSERT INTO entity_views (id, entity_id, viewed_at, duration_ms, context) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), entity_id, dt.datetime.now().astimezone().isoformat(),
+                 duration_ms, context),
+            )
+            self._send_json({"ok": True}, status=201)
+            return
+
+        if parsed.path.startswith("/api/entity/") and parsed.path.endswith("/interact"):
+            entity_id = parsed.path.split("/")[3]
+            body = self._read_json_body()
+            action = (body.get("action") or "").strip()
+            if not action:
+                self._send_json({"error": "action required"}, status=400)
+                return
+            execute(
+                "INSERT INTO entity_interactions (id, entity_id, action, created_at) VALUES (?, ?, ?, ?)",
+                (str(uuid.uuid4()), entity_id, action, dt.datetime.now().astimezone().isoformat()),
+            )
+            self._send_json({"ok": True}, status=201)
+            return
 
         if parsed.path == "/api/todos":
             body = self._read_json_body()
